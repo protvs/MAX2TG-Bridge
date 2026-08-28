@@ -181,6 +181,7 @@ sudo journalctl -u max2tg -f
 | `TG_CHAT_ID` | да | ID супергруппы (отрицательное число вида `-100…`) |
 | `TG_ALLOWED_USER_ID` | нет | Свой Telegram-user-id — ограничивает кто может слать команды и ответы |
 | `MAX_CHAT_IDS` | нет | Список chat_id MAX через запятую — если задан, обрабатываются только эти чаты |
+| `MAX_IGNORE_CHAT_IDS` | нет | Список chat_id MAX через запятую — эти чаты не обрабатываются, даже если входят в `MAX_CHAT_IDS` |
 | `TG_PROXY` | нет | SOCKS5-прокси для Telegram, формат `socks5://[user:pass@]host:port` |
 | `STATE_DIR` | нет | Папка для `topics.json` (по умолчанию `state`) |
 | `REPLY_ENABLED` | нет | `true` — включить ответы из топиков в MAX |

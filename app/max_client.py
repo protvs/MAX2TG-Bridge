@@ -95,12 +95,22 @@ class MaxClient:
     WS_URL = "wss://ws-api.oneme.ru/websocket"
     HEARTBEAT_SEC = 30
     RECONNECT_SEC = 5
-    chat_ids = []
 
-    def __init__(self, token: str, device_id: str, chat_ids: str | None = None, debug: bool = False):
+    def __init__(
+        self,
+        token: str,
+        device_id: str,
+        chat_ids: str | None = None,
+        ignore_chat_ids: str | None = None,
+        debug: bool = False,
+    ):
         self.token = token
         self.device_id = device_id
         self.debug = debug
+        self.chat_ids = self._parse_chat_ids(chat_ids, "MAX_CHAT_IDS")
+        self.ignore_chat_ids = self._parse_chat_ids(
+            ignore_chat_ids, "MAX_IGNORE_CHAT_IDS"
+        )
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._seq = 0
         self._my_id = None
@@ -112,8 +122,28 @@ class MaxClient:
         self._pending: dict[int, asyncio.Future] = {}
         self._file_pending: dict[int, asyncio.Future] = {}
         self._on_disconnect_cb = None
-        if chat_ids:
-            self.chat_ids += map(int, map(str.strip, chat_ids.split(',')))
+        if self.chat_ids:
+            log.info("Listening only to MAX chats: %s", self.chat_ids)
+        if self.ignore_chat_ids:
+            log.info("Ignoring MAX chats: %s", self.ignore_chat_ids)
+
+    @staticmethod
+    def _parse_chat_ids(raw: str | None, env_name: str) -> list[int]:
+        if not raw:
+            return []
+        try:
+            return [int(value.strip()) for value in raw.split(",")]
+        except ValueError as exc:
+            raise SystemExit(
+                f"{env_name} must contain comma-separated integer chat IDs"
+            ) from exc
+
+    def _should_dispatch_message(self, msg: MaxMessage | None) -> bool:
+        if msg is None:
+            return False
+        if msg.chat_id in self.ignore_chat_ids:
+            return False
+        return not self.chat_ids or msg.chat_id in self.chat_ids
 
     # ── decorator API ──────────────────────────────────────────────
 
@@ -297,7 +327,7 @@ class MaxClient:
 
                 if self._on_message_cb:
                     msg = self._parse_message(payload)
-                    if msg is not None and ((not self.chat_ids) or (msg.chat_id in self.chat_ids)):
+                    if self._should_dispatch_message(msg):
                         task = asyncio.create_task(self._on_message_cb(msg))
                         task.add_done_callback(_log_task_exception)
 

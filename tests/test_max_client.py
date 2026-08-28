@@ -275,3 +275,53 @@ class TestMaxClientInit:
 
         result = c.on_disconnect(my_handler)
         assert result is my_handler
+
+    def test_chat_ids_are_instance_local(self):
+        c1 = MaxClient(token="tok", device_id="dev", chat_ids="-1")
+        c2 = MaxClient(token="tok", device_id="dev")
+
+        assert c1.chat_ids == [-1]
+        assert c2.chat_ids == []
+
+    def test_ignore_chat_ids_are_parsed(self):
+        c = MaxClient(
+            token="tok",
+            device_id="dev",
+            ignore_chat_ids="-789, -101112",
+        )
+        assert c.ignore_chat_ids == [-789, -101112]
+
+    def test_invalid_ignore_chat_ids_raise_clear_error(self):
+        with pytest.raises(SystemExit) as exc:
+            MaxClient(token="tok", device_id="dev", ignore_chat_ids="-789, nope")
+
+        assert "MAX_IGNORE_CHAT_IDS" in str(exc.value)
+
+    def test_should_dispatch_all_chats_when_no_filters(self):
+        c = MaxClient(token="tok", device_id="dev")
+        assert c._should_dispatch_message(MaxMessage(chat_id=-1)) is True
+
+    def test_should_dispatch_only_allowed_chat_when_allow_list_set(self):
+        c = MaxClient(token="tok", device_id="dev", chat_ids="-1,-2")
+        assert c._should_dispatch_message(MaxMessage(chat_id=-1)) is True
+        assert c._should_dispatch_message(MaxMessage(chat_id=-3)) is False
+
+    def test_ignore_chat_ids_take_precedence_over_allow_list(self):
+        c = MaxClient(
+            token="tok",
+            device_id="dev",
+            chat_ids="-1,-2",
+            ignore_chat_ids="-2",
+        )
+
+        assert c._should_dispatch_message(MaxMessage(chat_id=-1)) is True
+        assert c._should_dispatch_message(MaxMessage(chat_id=-2)) is False
+
+    def test_ignore_chat_ids_filter_when_allow_list_unset(self):
+        c = MaxClient(token="tok", device_id="dev", ignore_chat_ids="-2")
+        assert c._should_dispatch_message(MaxMessage(chat_id=-1)) is True
+        assert c._should_dispatch_message(MaxMessage(chat_id=-2)) is False
+
+    def test_should_not_dispatch_none_message(self):
+        c = MaxClient(token="tok", device_id="dev")
+        assert c._should_dispatch_message(None) is False
