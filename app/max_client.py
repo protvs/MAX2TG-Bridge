@@ -112,6 +112,7 @@ class MaxClient:
             ignore_chat_ids, "MAX_IGNORE_CHAT_IDS"
         )
         self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._authorized = False
         self._seq = 0
         self._my_id = None
         self._on_ready_cb = None
@@ -158,6 +159,12 @@ class MaxClient:
     def on_disconnect(self, func):
         self._on_disconnect_cb = func
         return func
+
+    @property
+    def is_connected(self) -> bool:
+        return bool(
+            self._authorized and self._ws is not None and not self._ws.closed
+        )
 
     # ── transport ──────────────────────────────────────────────────
 
@@ -219,6 +226,7 @@ class MaxClient:
                         self.WS_URL, headers=_WS_HEADERS
                     ) as ws:
                         self._ws = ws
+                        self._authorized = False
                         self._seq = 0
                         self._pending.clear()
 
@@ -253,6 +261,8 @@ class MaxClient:
                     log.exception("Connection error")
 
                 finally:
+                    self._authorized = False
+                    self._ws = None
                     if self._heartbeat_task:
                         self._heartbeat_task.cancel()
                     for fut in self._pending.values():
@@ -311,6 +321,7 @@ class MaxClient:
 
             elif op == OpCode.AUTH_SNAPSHOT and cmd == 1:
                 self._my_id = payload.get("profile", {}).get("id")
+                self._authorized = True
                 log.info("Authorized! my_id=%s", self._my_id)
                 if self.debug:
                     self._dump_json("snapshot.json", payload)

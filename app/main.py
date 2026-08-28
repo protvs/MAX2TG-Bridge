@@ -9,6 +9,7 @@ from logging.handlers import RotatingFileHandler
 from telegram import Update
 
 from app.config import load_settings
+from app.health import start_health_server
 from app.max_listener import create_max_client
 from app.tg_handler import build_tg_app
 from app.tg_sender import TelegramSender
@@ -88,6 +89,7 @@ async def main():
     )
 
     tg_app = None
+    health_runner = None
     if settings.reply_enabled:
         tg_app = build_tg_app(settings.tg_bot_token, client, settings.tg_chat_id,
                               topic_store, allowed_user_id=settings.tg_allowed_user_id,
@@ -102,11 +104,15 @@ async def main():
     else:
         log.info("Reply to Max disabled (REPLY_ENABLED=false)")
 
+    health_runner = await start_health_server(client)
+
     log.info("Starting Max listener...")
     try:
         await client.run()
     finally:
         log.info("Shutting down...")
+        if health_runner:
+            await health_runner.cleanup()
         if tg_app:
             await tg_app.updater.stop()
             await tg_app.stop()

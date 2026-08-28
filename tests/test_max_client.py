@@ -325,3 +325,23 @@ class TestMaxClientInit:
     def test_should_not_dispatch_none_message(self):
         c = MaxClient(token="tok", device_id="dev")
         assert c._should_dispatch_message(None) is False
+
+    def test_is_connected_false_before_authorization(self):
+        c = MaxClient(token="tok", device_id="dev")
+        c._ws = type("Ws", (), {"closed": False})()
+
+        assert c.is_connected is False
+
+    def test_is_connected_false_when_ws_closed(self):
+        c = MaxClient(token="tok", device_id="dev")
+        c._authorized = True
+        c._ws = type("Ws", (), {"closed": True})()
+
+        assert c.is_connected is False
+
+    def test_is_connected_true_when_authorized_and_ws_open(self):
+        c = MaxClient(token="tok", device_id="dev")
+        c._authorized = True
+        c._ws = type("Ws", (), {"closed": False})()
+
+        assert c.is_connected is True

@@ -184,6 +184,8 @@ sudo journalctl -u max2tg -f
 | `MAX_IGNORE_CHAT_IDS` | нет | Список chat_id MAX через запятую — эти чаты не обрабатываются, даже если входят в `MAX_CHAT_IDS` |
 | `TG_PROXY` | нет | SOCKS5-прокси для Telegram, формат `socks5://[user:pass@]host:port` |
 | `STATE_DIR` | нет | Папка для `topics.json` (по умолчанию `state`) |
+| `HEALTH_HOST` | нет | Адрес health endpoint (по умолчанию `0.0.0.0`) |
+| `HEALTH_PORT` | нет | Порт health endpoint (по умолчанию `8080`) |
 | `REPLY_ENABLED` | нет | `true` — включить ответы из топиков в MAX |
 | `DEBUG` | нет | `true` — verbose-логи + dump JSON в `debug/` |
 
