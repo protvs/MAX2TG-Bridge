@@ -245,7 +245,7 @@ class TestHandleMessage:
             force_rename=False,
         )
 
-    async def test_existing_topic_named_like_user_is_renamed_to_group_title(self):
+    async def test_existing_group_topic_is_renamed_to_resolved_chat_title(self):
         sender = MagicMock()
         sender.send = AsyncMock()
         sender.ensure_topic = AsyncMock(return_value=777)
@@ -262,8 +262,6 @@ class TestHandleMessage:
         resolver.resolve_chat = AsyncMock(return_value="Д/с")
         resolver.resolve_user = AsyncMock(return_value="Юлия Матвеева")
         resolver.chat_types[-100] = "GROUP"
-        resolver.users[42] = "Анастасия"
-        resolver.users[43] = "Юлия Матвеева"
 
         await client._on_message_cb(
             MaxMessage(chat_id=-100, sender_id=43, text="Здравствуйте")

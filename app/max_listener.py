@@ -86,13 +86,6 @@ def _topic_title_for_message(
     return str(msg.chat_id)
 
 
-def _looks_like_user_title(title: str, resolver: ContactResolver) -> bool:
-    normalized = (title or "").strip()
-    return bool(normalized) and normalized in {
-        str(name).strip() for name in resolver.users.values() if name
-    }
-
-
 async def _send_attach(
     attach: dict,
     client: MaxClient,
@@ -398,7 +391,7 @@ def create_max_client(
             existing_thread is not None
             and not is_dm
             and _is_known_chat_title(msg.chat_id, topic_title)
-            and _looks_like_user_title(stored_title, resolver)
+            and stored_title != topic_title
         )
         thread_id = await sender.ensure_topic(
             msg.chat_id,
