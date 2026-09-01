@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
@@ -95,6 +96,8 @@ class MaxClient:
     WS_URL = "wss://ws-api.oneme.ru/websocket"
     HEARTBEAT_SEC = 30
     RECONNECT_SEC = 5
+    MESSAGE_DEDUPE_TTL_SEC = 24 * 60 * 60
+    MESSAGE_DEDUPE_MAX = 4096
 
     def __init__(
         self,
@@ -122,6 +125,7 @@ class MaxClient:
         self._dispatch_counter = 0
         self._pending: dict[int, asyncio.Future] = {}
         self._file_pending: dict[int, asyncio.Future] = {}
+        self._seen_messages: OrderedDict[tuple[Any, str], float] = OrderedDict()
         self._on_disconnect_cb = None
         if self.chat_ids:
             log.info("Listening only to MAX chats: %s", self.chat_ids)
@@ -145,6 +149,31 @@ class MaxClient:
         if msg.chat_id in self.ignore_chat_ids:
             return False
         return not self.chat_ids or msg.chat_id in self.chat_ids
+
+    def _mark_message_seen(self, msg: MaxMessage, now: float | None = None) -> bool:
+        if not msg.message_id:
+            return True
+
+        if now is None:
+            now = time.monotonic()
+
+        cutoff = now - self.MESSAGE_DEDUPE_TTL_SEC
+        while self._seen_messages:
+            _, seen_at = next(iter(self._seen_messages.items()))
+            if seen_at >= cutoff:
+                break
+            self._seen_messages.popitem(last=False)
+
+        key = (msg.chat_id, msg.message_id)
+        if key in self._seen_messages:
+            self._seen_messages.move_to_end(key)
+            self._seen_messages[key] = now
+            return False
+
+        self._seen_messages[key] = now
+        while len(self._seen_messages) > self.MESSAGE_DEDUPE_MAX:
+            self._seen_messages.popitem(last=False)
+        return True
 
     # ── decorator API ──────────────────────────────────────────────
 
@@ -339,8 +368,15 @@ class MaxClient:
                 if self._on_message_cb:
                     msg = self._parse_message(payload)
                     if self._should_dispatch_message(msg):
-                        task = asyncio.create_task(self._on_message_cb(msg))
-                        task.add_done_callback(_log_task_exception)
+                        if not self._mark_message_seen(msg):
+                            log.info(
+                                "Skipping duplicate MAX message: chat=%s message_id=%s",
+                                msg.chat_id,
+                                msg.message_id,
+                            )
+                        else:
+                            task = asyncio.create_task(self._on_message_cb(msg))
+                            task.add_done_callback(_log_task_exception)
 
             elif op == OpCode.UPLOAD_READY:
                 # Server confirms an uploaded file/video finished server-side processing.

@@ -326,6 +326,48 @@ class TestMaxClientInit:
         c = MaxClient(token="tok", device_id="dev")
         assert c._should_dispatch_message(None) is False
 
+    def test_mark_message_seen_accepts_first_message(self):
+        c = MaxClient(token="tok", device_id="dev")
+        msg = MaxMessage(chat_id=-1, message_id="m1")
+
+        assert c._mark_message_seen(msg, now=100.0) is True
+
+    def test_mark_message_seen_rejects_duplicate_message(self):
+        c = MaxClient(token="tok", device_id="dev")
+        msg = MaxMessage(chat_id=-1, message_id="m1")
+
+        assert c._mark_message_seen(msg, now=100.0) is True
+        assert c._mark_message_seen(msg, now=101.0) is False
+
+    def test_mark_message_seen_scopes_duplicates_by_chat(self):
+        c = MaxClient(token="tok", device_id="dev")
+
+        assert c._mark_message_seen(
+            MaxMessage(chat_id=-1, message_id="m1"),
+            now=100.0,
+        ) is True
+        assert c._mark_message_seen(
+            MaxMessage(chat_id=-2, message_id="m1"),
+            now=101.0,
+        ) is True
+
+    def test_mark_message_seen_allows_missing_message_id(self):
+        c = MaxClient(token="tok", device_id="dev")
+        msg = MaxMessage(chat_id=-1, message_id="")
+
+        assert c._mark_message_seen(msg, now=100.0) is True
+        assert c._mark_message_seen(msg, now=101.0) is True
+
+    def test_mark_message_seen_expires_old_entries(self):
+        c = MaxClient(token="tok", device_id="dev")
+        msg = MaxMessage(chat_id=-1, message_id="m1")
+
+        assert c._mark_message_seen(msg, now=100.0) is True
+        assert c._mark_message_seen(
+            msg,
+            now=100.0 + c.MESSAGE_DEDUPE_TTL_SEC + 1,
+        ) is True
+
     def test_is_connected_false_before_authorization(self):
         c = MaxClient(token="tok", device_id="dev")
         c._ws = type("Ws", (), {"closed": False})()
