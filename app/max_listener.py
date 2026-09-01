@@ -43,6 +43,56 @@ def _guess_media_kind(filename: str) -> str:
     return "document"
 
 
+def _meaningful_attaches(attaches: list) -> list[dict]:
+    return [
+        attach for attach in attaches
+        if (
+            isinstance(attach, dict)
+            and attach.get("_type") not in (
+                "CONTROL",
+                "WIDGET",
+                "INLINE_KEYBOARD",
+                None,
+            )
+        )
+    ]
+
+
+def _has_forwardable_content(msg: MaxMessage) -> bool:
+    if msg.text:
+        return True
+
+    link_type = msg.link.get("type") if isinstance(msg.link, dict) else None
+    if link_type in ("FORWARD", "REPLY"):
+        return True
+
+    return bool(_meaningful_attaches(msg.attaches))
+
+
+def _is_known_chat_title(chat_id, title: str) -> bool:
+    return title != str(chat_id) and not title.startswith("DM:")
+
+
+def _topic_title_for_message(
+    msg: MaxMessage,
+    raw_sender: str,
+    raw_chat: str,
+    is_dm: bool,
+) -> str:
+    if is_dm:
+        return raw_sender
+    if _is_known_chat_title(msg.chat_id, raw_chat):
+        return raw_chat
+    return str(msg.chat_id)
+
+
+def _looks_like_user_title(title: str, resolver: ContactResolver) -> bool:
+    normalized = (title or "").strip()
+    return bool(normalized) and normalized in {
+        str(name).strip() for name in resolver.users.values() if name
+    }
+
+
 async def _send_attach(
     attach: dict,
     client: MaxClient,
@@ -322,24 +372,39 @@ def create_max_client(
         if msg.is_self:
             return
 
+        if not _has_forwardable_content(msg):
+            log.info(
+                "Skipping empty/system MAX event: chat=%s sender=%s raw_keys=%s",
+                msg.chat_id,
+                msg.sender_id,
+                list(msg.raw.keys()),
+            )
+            return
+
+        raw_chat = await resolver.resolve_chat(msg.chat_id)
         raw_sender = await resolver.resolve_user(msg.sender_id)
         is_dm = resolver.is_dm(msg.chat_id)
-        raw_chat = resolver.chat_name(msg.chat_id)
 
         # One forum topic per Max chat. Prefer a human title:
         # - DMs → the peer's name
         # - Groups with a known title → the chat title
-        # - Chats discovered at runtime (no known title yet) → the sender's name
-        #   (better than the numeric chat ID; ensure_topic will rename later if a
-        #   real chat title appears).
-        chat_title_known = raw_chat != str(msg.chat_id) and not raw_chat.startswith("DM:")
-        if is_dm or not chat_title_known:
-            topic_title = raw_sender
-        else:
-            topic_title = raw_chat
+        # - Unknown chats → numeric placeholder, so a later real chat title can
+        #   safely rename the topic.
+        topic_title = _topic_title_for_message(msg, raw_sender, raw_chat, is_dm)
 
         existing_thread = sender.topic_store.get_topic(msg.chat_id)
-        thread_id = await sender.ensure_topic(msg.chat_id, topic_title)
+        stored_title = sender.topic_store.get_title(msg.chat_id) or ""
+        force_rename = (
+            existing_thread is not None
+            and not is_dm
+            and _is_known_chat_title(msg.chat_id, topic_title)
+            and _looks_like_user_title(stored_title, resolver)
+        )
+        thread_id = await sender.ensure_topic(
+            msg.chat_id,
+            topic_title,
+            force_rename=force_rename,
+        )
 
         # First time we touch this chat → publish a pinned profile card so the
         # topic starts with context (avatar, name, etc.).
@@ -363,10 +428,7 @@ def create_max_client(
             log.info("Forwarded link type=%s → TG", link_type)
             return
 
-        meaningful_attaches = [
-            a for a in msg.attaches
-            if isinstance(a, dict) and a.get("_type") not in ("CONTROL", "WIDGET", "INLINE_KEYBOARD", None)
-        ]
+        meaningful_attaches = _meaningful_attaches(msg.attaches)
 
         if meaningful_attaches:
             text_sent = False

@@ -369,6 +369,18 @@ class MaxClient:
         log.info("fetch_contacts(%s) → keys: %s", contact_ids, list(resp.keys()))
         return resp
 
+    async def fetch_chat(self, chat_id) -> dict:
+        """Fetch chat metadata via WS opcode 48. Returns raw response payload."""
+        resp = await self.cmd(OpCode.CHAT_GET, {"chatId": chat_id})
+        if self.debug:
+            self._dump_json(f"chat_{chat_id}.json", resp)
+        log.info(
+            "fetch_chat(%s) → keys: %s",
+            chat_id,
+            list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__,
+        )
+        return resp
+
     async def send_message(self, chat_id, text: str = "", elements=None,
                             attaches=None) -> dict:
         """Send a message to a Max chat. Returns the server response.

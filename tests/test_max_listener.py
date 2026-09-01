@@ -1,7 +1,16 @@
 """Tests for app/max_listener.py — pure helper functions."""
 
 import pytest
-from app.max_listener import _human_size, _guess_media_kind
+from unittest.mock import AsyncMock, MagicMock
+
+from app.max_client import MaxMessage
+from app.max_listener import (
+    _guess_media_kind,
+    _has_forwardable_content,
+    _human_size,
+    _topic_title_for_message,
+    create_max_client,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -144,3 +153,124 @@ class TestGuessMediaKind:
     # Extension appearing in the middle of filename should not trigger false match
     def test_mp4_in_name_not_extension_is_document(self):
         assert _guess_media_kind("mp4_notes.txt") == "document"
+
+
+# ---------------------------------------------------------------------------
+# message forwarding filter
+# ---------------------------------------------------------------------------
+
+class TestForwardableContent:
+    def test_empty_message_is_not_forwardable(self):
+        assert _has_forwardable_content(MaxMessage()) is False
+
+    def test_text_message_is_forwardable(self):
+        assert _has_forwardable_content(MaxMessage(text="hello")) is True
+
+    def test_control_only_message_is_not_forwardable(self):
+        msg = MaxMessage(attaches=[{"_type": "CONTROL"}])
+        assert _has_forwardable_content(msg) is False
+
+    def test_media_message_is_forwardable(self):
+        msg = MaxMessage(attaches=[{"_type": "PHOTO", "url": "http://example/img"}])
+        assert _has_forwardable_content(msg) is True
+
+    def test_forward_link_is_forwardable(self):
+        msg = MaxMessage(link={"type": "FORWARD", "message": {"text": "inner"}})
+        assert _has_forwardable_content(msg) is True
+
+
+class TestTopicTitle:
+    def test_dm_uses_sender_name(self):
+        msg = MaxMessage(chat_id=42)
+        assert _topic_title_for_message(msg, "Alice", "DM:7", True) == "Alice"
+
+    def test_known_group_uses_chat_title(self):
+        msg = MaxMessage(chat_id=-100)
+        assert _topic_title_for_message(msg, "Alice", "Д/с", False) == "Д/с"
+
+    def test_unknown_group_uses_numeric_placeholder_not_sender_name(self):
+        msg = MaxMessage(chat_id=-100)
+        assert _topic_title_for_message(msg, "Alice", "-100", False) == "-100"
+
+
+class TestHandleMessage:
+    async def test_empty_system_event_does_not_create_topic_or_send(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock()
+        sender.topic_store = MagicMock()
+        sender.topic_store.get_topic.return_value = None
+
+        client = create_max_client(
+            max_token="tok",
+            max_device_id="dev",
+            sender=sender,
+        )
+        msg = MaxMessage(
+            chat_id=-100,
+            sender_id=42,
+            raw={"chatId": -100, "message": {"sender": 42}},
+        )
+
+        await client._on_message_cb(msg)
+
+        sender.ensure_topic.assert_not_called()
+        sender.send.assert_not_called()
+
+    async def test_group_message_uses_resolved_chat_title_for_topic(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock(return_value=777)
+        sender.topic_store = MagicMock()
+        sender.topic_store.get_topic.return_value = None
+        sender.topic_store.get_title.return_value = None
+
+        client = create_max_client(
+            max_token="tok",
+            max_device_id="dev",
+            sender=sender,
+        )
+        resolver = client.resolver
+        resolver.resolve_chat = AsyncMock(return_value="Д/с")
+        resolver.resolve_user = AsyncMock(return_value="Анастасия")
+        resolver.chat_types[-100] = "GROUP"
+
+        await client._on_message_cb(
+            MaxMessage(chat_id=-100, sender_id=42, text="Добрый вечер")
+        )
+
+        sender.ensure_topic.assert_awaited_once_with(
+            -100,
+            "Д/с",
+            force_rename=False,
+        )
+
+    async def test_existing_topic_named_like_user_is_renamed_to_group_title(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock(return_value=777)
+        sender.topic_store = MagicMock()
+        sender.topic_store.get_topic.return_value = 777
+        sender.topic_store.get_title.return_value = "Анастасия"
+
+        client = create_max_client(
+            max_token="tok",
+            max_device_id="dev",
+            sender=sender,
+        )
+        resolver = client.resolver
+        resolver.resolve_chat = AsyncMock(return_value="Д/с")
+        resolver.resolve_user = AsyncMock(return_value="Юлия Матвеева")
+        resolver.chat_types[-100] = "GROUP"
+        resolver.users[42] = "Анастасия"
+        resolver.users[43] = "Юлия Матвеева"
+
+        await client._on_message_cb(
+            MaxMessage(chat_id=-100, sender_id=43, text="Здравствуйте")
+        )
+
+        sender.ensure_topic.assert_awaited_once_with(
+            -100,
+            "Д/с",
+            force_rename=True,
+        )

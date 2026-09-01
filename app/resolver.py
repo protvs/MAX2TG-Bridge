@@ -20,6 +20,7 @@ class ContactResolver:
         self.contacts_raw: dict[Any, dict] = {}   # full contact dicts per id
         self._client = client
         self._fetch_failed: set = set()
+        self._chat_fetch_failed: set = set()
         self._my_id: Any = None
 
     @property
@@ -53,6 +54,20 @@ class ContactResolver:
         unknown = [uid for uid in user_ids if uid not in self.users and uid not in self._fetch_failed]
         if unknown:
             await self._ws_fetch_contacts(unknown)
+
+    async def resolve_chat(self, chat_id: Any) -> str:
+        """Best-effort fetch of chat metadata for chats missing from snapshot."""
+        if chat_id in self.chats:
+            return self.chat_name(chat_id)
+        if chat_id in self._chat_fetch_failed:
+            return self.chat_name(chat_id)
+
+        await self._ws_fetch_chat(chat_id)
+
+        if chat_id in self.chats:
+            return self.chat_name(chat_id)
+        self._chat_fetch_failed.add(chat_id)
+        return self.chat_name(chat_id)
 
     # ── populate from AUTH_SNAPSHOT ────────────────────────────────
 
@@ -151,6 +166,57 @@ class ContactResolver:
 
         # Walk the entire response for any name-bearing objects
         self._deep_extract(resp, depth=0)
+
+    async def _ws_fetch_chat(self, chat_id: Any) -> None:
+        if not self._client:
+            return
+        try:
+            resp = await self._client.fetch_chat(chat_id)
+            self._parse_chat_response(resp, requested_chat_id=chat_id)
+        except Exception:
+            log.exception("Failed to fetch chat via WS")
+
+    def _parse_chat_response(
+        self,
+        resp: dict,
+        requested_chat_id: Any | None = None,
+    ) -> None:
+        """Parse a CHAT_GET-like response and update known chat metadata."""
+        if not isinstance(resp, dict) or not resp or "_max_error" in resp:
+            return
+
+        chats = []
+        if isinstance(resp.get("chat"), dict):
+            chats.append(resp["chat"])
+
+        resp_chats = resp.get("chats")
+        if isinstance(resp_chats, dict):
+            chats.extend(c for c in resp_chats.values() if isinstance(c, dict))
+        elif isinstance(resp_chats, list):
+            chats.extend(c for c in resp_chats if isinstance(c, dict))
+
+        if not chats and (
+            resp.get("id") == requested_chat_id
+            or resp.get("chatId") == requested_chat_id
+            or resp.get("title")
+            or resp.get("participants")
+        ):
+            chats.append(resp)
+
+        for chat in chats:
+            cid = chat.get("id") or chat.get("chatId") or requested_chat_id
+            if cid is None:
+                continue
+
+            self.chats_raw[cid] = chat
+
+            ctype = chat.get("type")
+            if ctype:
+                self.chat_types[cid] = ctype
+
+            title = chat.get("title")
+            if title:
+                self.chats[cid] = title
 
     def _deep_extract(self, obj: Any, depth: int) -> None:
         if depth > 5:

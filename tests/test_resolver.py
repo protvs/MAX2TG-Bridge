@@ -1,6 +1,8 @@
 """Tests for app/resolver.py — ContactResolver."""
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
+
 from app.resolver import ContactResolver
 
 
@@ -340,3 +342,51 @@ class TestResolveUser:
         result = await resolver.resolve_user(77)
         assert result == "Fetched User"
         assert 77 not in resolver._fetch_failed
+
+
+# ---------------------------------------------------------------------------
+# resolve_chat / CHAT_GET parsing
+# ---------------------------------------------------------------------------
+
+class TestResolveChat:
+    def test_parse_chat_response_from_chat_field(self):
+        resolver = ContactResolver()
+        resolver._parse_chat_response(
+            {"chat": {"id": -100, "type": "GROUP", "title": "Д/с"}}
+        )
+
+        assert resolver.chat_name(-100) == "Д/с"
+        assert resolver.is_dm(-100) is False
+        assert resolver.chats_raw[-100]["title"] == "Д/с"
+
+    def test_parse_chat_response_from_direct_object(self):
+        resolver = ContactResolver()
+        resolver._parse_chat_response(
+            {"id": -100, "type": "GROUP", "title": "Д/с"},
+            requested_chat_id=-100,
+        )
+
+        assert resolver.chat_name(-100) == "Д/с"
+
+    async def test_resolve_chat_fetches_unknown_chat(self):
+        client = MagicMock()
+        client.fetch_chat = AsyncMock(
+            return_value={"chat": {"id": -100, "type": "GROUP", "title": "Д/с"}}
+        )
+        resolver = ContactResolver(client=client)
+
+        result = await resolver.resolve_chat(-100)
+
+        assert result == "Д/с"
+        client.fetch_chat.assert_awaited_once_with(-100)
+
+    async def test_resolve_chat_returns_cached_title(self):
+        client = MagicMock()
+        client.fetch_chat = AsyncMock()
+        resolver = ContactResolver(client=client)
+        resolver.chats[-100] = "Д/с"
+
+        result = await resolver.resolve_chat(-100)
+
+        assert result == "Д/с"
+        client.fetch_chat.assert_not_called()
