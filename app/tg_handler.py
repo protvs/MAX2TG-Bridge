@@ -106,7 +106,10 @@ def _peer_id_in_dm(resolver, chat_id) -> int | None:
             continue
         if uid != my_id:
             return uid
-    return None
+    try:
+        return int(chat_id) if int(chat_id) > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_topic_target(update: Update, context: ContextTypes.DEFAULT_TYPE):

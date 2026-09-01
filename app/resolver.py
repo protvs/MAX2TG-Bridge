@@ -31,7 +31,13 @@ class ContactResolver:
         return self.chats.get(chat_id, str(chat_id))
 
     def is_dm(self, chat_id: Any) -> bool:
-        return self.chat_types.get(chat_id) == "DIALOG"
+        chat_type = self.chat_types.get(chat_id)
+        if chat_type:
+            return chat_type == "DIALOG"
+        try:
+            return int(chat_id) > 0
+        except (TypeError, ValueError):
+            return False
 
     def user_name(self, user_id: Any) -> str:
         return self.users.get(user_id, str(user_id))

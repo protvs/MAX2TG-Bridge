@@ -7,6 +7,7 @@ from app.tg_handler import (
     MAX_CLIENT_KEY,
     TOPIC_STORE_KEY,
     _on_topic_message,
+    _peer_id_in_dm,
     build_tg_app,
 )
 
@@ -45,6 +46,26 @@ def _make_context(max_client=None, topic_store=None, allowed_user_id=None):
         bot_data[TOPIC_STORE_KEY] = topic_store
     ctx.bot_data = bot_data
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# _peer_id_in_dm
+# ---------------------------------------------------------------------------
+
+class TestPeerIdInDm:
+    def test_falls_back_to_positive_chat_id_when_participants_unknown(self):
+        resolver = MagicMock()
+        resolver.chats_raw = {}
+        resolver.my_id = 1
+
+        assert _peer_id_in_dm(resolver, 232221597) == 232221597
+
+    def test_does_not_fall_back_to_negative_chat_id(self):
+        resolver = MagicMock()
+        resolver.chats_raw = {}
+        resolver.my_id = 1
+
+        assert _peer_id_in_dm(resolver, -78387493838230) is None
 
 
 # ---------------------------------------------------------------------------

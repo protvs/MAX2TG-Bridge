@@ -221,9 +221,13 @@ class TestGetName:
         resolver.chat_types[2] = "GROUP"
         assert resolver.is_dm(2) is False
 
-    def test_is_dm_false_for_unknown(self):
+    def test_is_dm_true_for_unknown_positive_chat_id(self):
         resolver = ContactResolver()
-        assert resolver.is_dm(999) is False
+        assert resolver.is_dm(999) is True
+
+    def test_is_dm_false_for_unknown_negative_chat_id(self):
+        resolver = ContactResolver()
+        assert resolver.is_dm(-999) is False
 
 
 # ---------------------------------------------------------------------------

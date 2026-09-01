@@ -192,6 +192,13 @@ class TestTopicTitle:
         msg = MaxMessage(chat_id=-100)
         assert _topic_title_for_message(msg, "Alice", "-100", False) == "-100"
 
+    def test_unknown_dm_uses_sender_name(self):
+        msg = MaxMessage(chat_id=232221597)
+        assert (
+            _topic_title_for_message(msg, "Галина Владимировна", "232221597", True)
+            == "Галина Владимировна"
+        )
+
 
 class TestHandleMessage:
     async def test_empty_system_event_does_not_create_topic_or_send(self):
