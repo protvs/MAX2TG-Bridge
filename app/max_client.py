@@ -125,7 +125,8 @@ class MaxClient:
         self._dispatch_counter = 0
         self._pending: dict[int, asyncio.Future] = {}
         self._file_pending: dict[int, asyncio.Future] = {}
-        self._seen_messages: OrderedDict[tuple[Any, str], float] = OrderedDict()
+        self._delivered_messages: OrderedDict[tuple[Any, str], float] = OrderedDict()
+        self._inflight_messages: set[tuple[Any, str]] = set()
         self._on_disconnect_cb = None
         if self.chat_ids:
             log.info("Listening only to MAX chats: %s", self.chat_ids)
@@ -150,30 +151,54 @@ class MaxClient:
             return False
         return not self.chat_ids or msg.chat_id in self.chat_ids
 
-    def _mark_message_seen(self, msg: MaxMessage, now: float | None = None) -> bool:
+    def _message_dedupe_key(self, msg: MaxMessage) -> tuple[Any, str] | None:
         if not msg.message_id:
-            return True
+            return None
+        return (msg.chat_id, msg.message_id)
 
+    def _prune_delivered_messages(self, now: float | None = None) -> None:
         if now is None:
             now = time.monotonic()
 
         cutoff = now - self.MESSAGE_DEDUPE_TTL_SEC
-        while self._seen_messages:
-            _, seen_at = next(iter(self._seen_messages.items()))
+        while self._delivered_messages:
+            _, seen_at = next(iter(self._delivered_messages.items()))
             if seen_at >= cutoff:
                 break
-            self._seen_messages.popitem(last=False)
+            self._delivered_messages.popitem(last=False)
 
-        key = (msg.chat_id, msg.message_id)
-        if key in self._seen_messages:
-            self._seen_messages.move_to_end(key)
-            self._seen_messages[key] = now
+    def _can_start_message(self, msg: MaxMessage, now: float | None = None) -> bool:
+        key = self._message_dedupe_key(msg)
+        if key is None:
+            return True
+
+        self._prune_delivered_messages(now)
+        if key in self._delivered_messages or key in self._inflight_messages:
             return False
 
-        self._seen_messages[key] = now
-        while len(self._seen_messages) > self.MESSAGE_DEDUPE_MAX:
-            self._seen_messages.popitem(last=False)
+        self._inflight_messages.add(key)
         return True
+
+    def _finish_message(self, msg: MaxMessage, delivered: bool) -> None:
+        key = self._message_dedupe_key(msg)
+        if key is None:
+            return
+
+        self._inflight_messages.discard(key)
+        if not delivered:
+            return
+
+        self._delivered_messages[key] = time.monotonic()
+        while len(self._delivered_messages) > self.MESSAGE_DEDUPE_MAX:
+            self._delivered_messages.popitem(last=False)
+
+    async def _run_message_callback(self, msg: MaxMessage) -> None:
+        delivered = False
+        try:
+            await self._on_message_cb(msg)
+            delivered = True
+        finally:
+            self._finish_message(msg, delivered)
 
     # ── decorator API ──────────────────────────────────────────────
 
@@ -219,6 +244,8 @@ class MaxClient:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[dict] = loop.create_future()
         seq = await self._send(opcode, payload)
+        if seq < 0:
+            return {}
         self._pending[seq] = fut
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
@@ -368,14 +395,16 @@ class MaxClient:
                 if self._on_message_cb:
                     msg = self._parse_message(payload)
                     if self._should_dispatch_message(msg):
-                        if not self._mark_message_seen(msg):
+                        if not self._can_start_message(msg):
                             log.info(
                                 "Skipping duplicate MAX message: chat=%s message_id=%s",
                                 msg.chat_id,
                                 msg.message_id,
                             )
                         else:
-                            task = asyncio.create_task(self._on_message_cb(msg))
+                            task = asyncio.create_task(
+                                self._run_message_callback(msg)
+                            )
                             task.add_done_callback(_log_task_exception)
 
             elif op == OpCode.UPLOAD_READY:
@@ -407,7 +436,7 @@ class MaxClient:
 
     async def fetch_chat(self, chat_id) -> dict:
         """Fetch chat metadata via WS opcode 48. Returns raw response payload."""
-        resp = await self.cmd(OpCode.CHAT_GET, {"chatId": chat_id})
+        resp = await self.cmd(OpCode.CHAT_GET, {"chatIds": [chat_id]})
         if self.debug:
             self._dump_json(f"chat_{chat_id}.json", resp)
         log.info(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -139,6 +140,8 @@ class ContactResolver:
         try:
             resp = await self._client.fetch_contacts(user_ids)
             self._parse_contacts_response(resp)
+        except asyncio.CancelledError:
+            log.warning("Contact fetch cancelled, falling back to numeric user IDs")
         except Exception:
             log.exception("Failed to fetch contacts via WS")
 
@@ -179,6 +182,8 @@ class ContactResolver:
         try:
             resp = await self._client.fetch_chat(chat_id)
             self._parse_chat_response(resp, requested_chat_id=chat_id)
+        except asyncio.CancelledError:
+            log.warning("Chat fetch cancelled, falling back to cached chat metadata")
         except Exception:
             log.exception("Failed to fetch chat via WS")
 

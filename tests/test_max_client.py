@@ -1,6 +1,8 @@
 """Tests for app/max_client.py — OpCode enum and _parse_message."""
 
 import pytest
+from unittest.mock import AsyncMock
+
 from app.max_client import MaxClient, MaxMessage, OpCode
 
 
@@ -326,47 +328,90 @@ class TestMaxClientInit:
         c = MaxClient(token="tok", device_id="dev")
         assert c._should_dispatch_message(None) is False
 
-    def test_mark_message_seen_accepts_first_message(self):
+    def test_can_start_message_accepts_first_message(self):
         c = MaxClient(token="tok", device_id="dev")
         msg = MaxMessage(chat_id=-1, message_id="m1")
 
-        assert c._mark_message_seen(msg, now=100.0) is True
+        assert c._can_start_message(msg, now=100.0) is True
 
-    def test_mark_message_seen_rejects_duplicate_message(self):
+    def test_can_start_message_rejects_inflight_duplicate_message(self):
         c = MaxClient(token="tok", device_id="dev")
         msg = MaxMessage(chat_id=-1, message_id="m1")
 
-        assert c._mark_message_seen(msg, now=100.0) is True
-        assert c._mark_message_seen(msg, now=101.0) is False
+        assert c._can_start_message(msg, now=100.0) is True
+        assert c._can_start_message(msg, now=101.0) is False
 
-    def test_mark_message_seen_scopes_duplicates_by_chat(self):
+    def test_can_start_message_scopes_duplicates_by_chat(self):
         c = MaxClient(token="tok", device_id="dev")
 
-        assert c._mark_message_seen(
+        assert c._can_start_message(
             MaxMessage(chat_id=-1, message_id="m1"),
             now=100.0,
         ) is True
-        assert c._mark_message_seen(
+        assert c._can_start_message(
             MaxMessage(chat_id=-2, message_id="m1"),
             now=101.0,
         ) is True
 
-    def test_mark_message_seen_allows_missing_message_id(self):
+    def test_can_start_message_allows_missing_message_id(self):
         c = MaxClient(token="tok", device_id="dev")
         msg = MaxMessage(chat_id=-1, message_id="")
 
-        assert c._mark_message_seen(msg, now=100.0) is True
-        assert c._mark_message_seen(msg, now=101.0) is True
+        assert c._can_start_message(msg, now=100.0) is True
+        assert c._can_start_message(msg, now=101.0) is True
 
-    def test_mark_message_seen_expires_old_entries(self):
+    def test_finish_message_success_rejects_later_duplicate(self):
         c = MaxClient(token="tok", device_id="dev")
         msg = MaxMessage(chat_id=-1, message_id="m1")
 
-        assert c._mark_message_seen(msg, now=100.0) is True
-        assert c._mark_message_seen(
+        assert c._can_start_message(msg, now=100.0) is True
+        c._finish_message(msg, delivered=True)
+
+        assert c._can_start_message(msg, now=101.0) is False
+
+    def test_finish_message_failure_allows_retry(self):
+        c = MaxClient(token="tok", device_id="dev")
+        msg = MaxMessage(chat_id=-1, message_id="m1")
+
+        assert c._can_start_message(msg, now=100.0) is True
+        c._finish_message(msg, delivered=False)
+
+        assert c._can_start_message(msg, now=101.0) is True
+
+    def test_can_start_message_expires_old_delivered_entries(self):
+        c = MaxClient(token="tok", device_id="dev")
+        msg = MaxMessage(chat_id=-1, message_id="m1")
+
+        assert c._can_start_message(msg, now=100.0) is True
+        c._finish_message(msg, delivered=True)
+
+        assert c._can_start_message(
             msg,
             now=100.0 + c.MESSAGE_DEDUPE_TTL_SEC + 1,
         ) is True
+
+    async def test_fetch_chat_uses_chat_ids_payload(self):
+        c = MaxClient(token="tok", device_id="dev")
+        c.cmd = AsyncMock(return_value={"chats": []})
+
+        await c.fetch_chat(130382286)
+
+        c.cmd.assert_awaited_once_with(OpCode.CHAT_GET, {"chatIds": [130382286]})
+
+    async def test_failed_message_callback_allows_retry(self):
+        c = MaxClient(token="tok", device_id="dev")
+        msg = MaxMessage(chat_id=-1, message_id="m1")
+
+        async def fail(_msg):
+            raise RuntimeError("boom")
+
+        c._on_message_cb = fail
+        assert c._can_start_message(msg, now=100.0) is True
+
+        with pytest.raises(RuntimeError):
+            await c._run_message_callback(msg)
+
+        assert c._can_start_message(msg, now=101.0) is True
 
     def test_is_connected_false_before_authorization(self):
         c = MaxClient(token="tok", device_id="dev")
