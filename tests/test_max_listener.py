@@ -224,6 +224,50 @@ class TestHandleMessage:
         sender.ensure_topic.assert_not_called()
         sender.send.assert_not_called()
 
+    async def test_manual_self_message_is_forwarded(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock(return_value=777)
+        sender.topic_store = MagicMock()
+        sender.topic_store.get_topic.return_value = 777
+        sender.topic_store.get_title.return_value = "Alice"
+
+        client = create_max_client(
+            max_token="tok",
+            max_device_id="dev",
+            sender=sender,
+        )
+        resolver = client.resolver
+        resolver.resolve_chat = AsyncMock(return_value="Alice")
+        resolver.resolve_user = AsyncMock(return_value="Me")
+        resolver.chat_types[42] = "DIALOG"
+
+        await client._on_message_cb(
+            MaxMessage(chat_id=42, sender_id=1, text="ручное", is_self=True)
+        )
+
+        sender.send.assert_awaited_once()
+
+    async def test_bridge_echo_is_not_forwarded(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock()
+        sender.topic_store = MagicMock()
+
+        client = create_max_client(
+            max_token="tok",
+            max_device_id="dev",
+            sender=sender,
+        )
+        client._mark_outbound_cid(chat_id=42, cid=123, now=100.0)
+
+        await client._on_message_cb(
+            MaxMessage(chat_id=42, sender_id=1, text="эхо", cid=123, is_self=True)
+        )
+
+        sender.ensure_topic.assert_not_called()
+        sender.send.assert_not_called()
+
     async def test_group_message_uses_resolved_chat_title_for_topic(self):
         sender = MagicMock()
         sender.send = AsyncMock()

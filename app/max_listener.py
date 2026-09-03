@@ -362,7 +362,13 @@ def create_max_client(
             len(msg.attaches),
         )
 
-        if msg.is_self:
+        if client._is_bridge_echo(msg):
+            log.info(
+                "Skipping bridge echo from MAX: chat=%s cid=%s message_id=%s",
+                msg.chat_id,
+                msg.cid,
+                msg.message_id,
+            )
             return
 
         if not _has_forwardable_content(msg):

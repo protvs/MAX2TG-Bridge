@@ -86,6 +86,7 @@ class MaxMessage:
     text: str = ""
     timestamp: Any = None
     message_id: str = ""
+    cid: Any = None
     is_self: bool = False
     attaches: list = field(default_factory=list)
     link: dict = field(default_factory=dict)
@@ -98,6 +99,8 @@ class MaxClient:
     RECONNECT_SEC = 5
     MESSAGE_DEDUPE_TTL_SEC = 24 * 60 * 60
     MESSAGE_DEDUPE_MAX = 4096
+    OUTBOUND_ECHO_TTL_SEC = 60 * 60
+    OUTBOUND_ECHO_MAX = 4096
 
     def __init__(
         self,
@@ -127,6 +130,7 @@ class MaxClient:
         self._file_pending: dict[int, asyncio.Future] = {}
         self._delivered_messages: OrderedDict[tuple[Any, str], float] = OrderedDict()
         self._inflight_messages: set[tuple[Any, str]] = set()
+        self._outbound_cids: OrderedDict[tuple[Any, str], float] = OrderedDict()
         self._on_disconnect_cb = None
         if self.chat_ids:
             log.info("Listening only to MAX chats: %s", self.chat_ids)
@@ -191,6 +195,35 @@ class MaxClient:
         self._delivered_messages[key] = time.monotonic()
         while len(self._delivered_messages) > self.MESSAGE_DEDUPE_MAX:
             self._delivered_messages.popitem(last=False)
+
+    def _prune_outbound_cids(self, now: float | None = None) -> None:
+        if now is None:
+            now = time.monotonic()
+
+        cutoff = now - self.OUTBOUND_ECHO_TTL_SEC
+        while self._outbound_cids:
+            _, seen_at = next(iter(self._outbound_cids.items()))
+            if seen_at >= cutoff:
+                break
+            self._outbound_cids.popitem(last=False)
+
+    def _mark_outbound_cid(self, chat_id, cid, now: float | None = None) -> None:
+        if cid is None:
+            return
+        if now is None:
+            now = time.monotonic()
+
+        self._prune_outbound_cids(now)
+        self._outbound_cids[(chat_id, str(cid))] = now
+        while len(self._outbound_cids) > self.OUTBOUND_ECHO_MAX:
+            self._outbound_cids.popitem(last=False)
+
+    def _is_bridge_echo(self, msg: MaxMessage, now: float | None = None) -> bool:
+        if not msg.is_self or msg.cid is None:
+            return False
+
+        self._prune_outbound_cids(now)
+        return (msg.chat_id, str(msg.cid)) in self._outbound_cids
 
     async def _run_message_callback(self, msg: MaxMessage) -> None:
         delivered = False
@@ -459,6 +492,7 @@ class MaxClient:
         if attaches is None:
             attaches = []
         cid = int(time.time() * 1000) * 1000 + random.randint(0, 999)
+        self._mark_outbound_cid(chat_id, cid)
         message = {"text": text, "cid": cid, "elements": elements}
         if attaches:
             message["attaches"] = attaches
@@ -756,6 +790,7 @@ class MaxClient:
             text=msg_body.get("text", ""),
             timestamp=msg_body.get("time"),
             message_id=str(msg_body.get("id", "")),
+            cid=msg_body.get("cid"),
             attaches=msg_body.get("attaches") or [],
             link=msg_body.get("link") or {},
             raw=payload,

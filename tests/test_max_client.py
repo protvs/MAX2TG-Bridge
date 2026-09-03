@@ -139,6 +139,12 @@ class TestParseMessage:
         assert msg.timestamp == 1700000000000
         assert msg.message_id == "abc123"
 
+    def test_cid_is_parsed(self):
+        client = _make_client()
+        payload = {"chatId": 1, "message": {"cid": 123456789}}
+        msg = client._parse_message(payload)
+        assert msg.cid == 123456789
+
     def test_message_id_is_always_string(self):
         client = _make_client()
         payload = {"chatId": 1, "message": {"id": 99999}}
@@ -412,6 +418,32 @@ class TestMaxClientInit:
             await c._run_message_callback(msg)
 
         assert c._can_start_message(msg, now=101.0) is True
+
+    def test_bridge_echo_detected_by_outbound_cid(self):
+        c = MaxClient(token="tok", device_id="dev")
+        c._mark_outbound_cid(chat_id=-1, cid=123, now=100.0)
+
+        assert c._is_bridge_echo(
+            MaxMessage(chat_id=-1, cid=123, is_self=True),
+            now=101.0,
+        ) is True
+
+    def test_manual_self_message_is_not_bridge_echo(self):
+        c = MaxClient(token="tok", device_id="dev")
+
+        assert c._is_bridge_echo(
+            MaxMessage(chat_id=-1, cid=123, is_self=True),
+            now=101.0,
+        ) is False
+
+    def test_non_self_message_is_not_bridge_echo_even_with_outbound_cid(self):
+        c = MaxClient(token="tok", device_id="dev")
+        c._mark_outbound_cid(chat_id=-1, cid=123, now=100.0)
+
+        assert c._is_bridge_echo(
+            MaxMessage(chat_id=-1, cid=123, is_self=False),
+            now=101.0,
+        ) is False
 
     def test_is_connected_false_before_authorization(self):
         c = MaxClient(token="tok", device_id="dev")
