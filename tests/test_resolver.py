@@ -394,3 +394,18 @@ class TestResolveChat:
 
         assert result == "Д/с"
         client.fetch_chat.assert_not_called()
+
+    async def test_resolve_chat_refreshes_cached_title_when_requested(self):
+        client = MagicMock()
+        client.fetch_chat = AsyncMock(
+            return_value={
+                "chat": {"id": -100, "type": "GROUP", "title": "Новое Д/с"}
+            }
+        )
+        resolver = ContactResolver(client=client)
+        resolver.chats[-100] = "Старое Д/с"
+
+        result = await resolver.resolve_chat(-100, refresh=True)
+
+        assert result == "Новое Д/с"
+        client.fetch_chat.assert_awaited_once_with(-100)

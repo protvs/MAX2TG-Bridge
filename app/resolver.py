@@ -62,11 +62,11 @@ class ContactResolver:
         if unknown:
             await self._ws_fetch_contacts(unknown)
 
-    async def resolve_chat(self, chat_id: Any) -> str:
+    async def resolve_chat(self, chat_id: Any, *, refresh: bool = False) -> str:
         """Best-effort fetch of chat metadata for chats missing from snapshot."""
-        if chat_id in self.chats:
+        if chat_id in self.chats and not refresh:
             return self.chat_name(chat_id)
-        if chat_id in self._chat_fetch_failed:
+        if chat_id in self._chat_fetch_failed and not refresh:
             return self.chat_name(chat_id)
 
         await self._ws_fetch_chat(chat_id)

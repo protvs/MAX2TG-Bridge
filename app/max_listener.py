@@ -380,7 +380,11 @@ def create_max_client(
             )
             return
 
-        raw_chat = await resolver.resolve_chat(msg.chat_id)
+        existing_thread = sender.topic_store.get_topic(msg.chat_id)
+        raw_chat = await resolver.resolve_chat(
+            msg.chat_id,
+            refresh=existing_thread is not None and not resolver.is_dm(msg.chat_id),
+        )
         raw_sender = await resolver.resolve_user(msg.sender_id)
         is_dm = resolver.is_dm(msg.chat_id)
 
@@ -391,7 +395,6 @@ def create_max_client(
         #   safely rename the topic.
         topic_title = _topic_title_for_message(msg, raw_sender, raw_chat, is_dm)
 
-        existing_thread = sender.topic_store.get_topic(msg.chat_id)
         stored_title = sender.topic_store.get_title(msg.chat_id) or ""
         force_rename = (
             existing_thread is not None

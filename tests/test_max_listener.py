@@ -323,3 +323,32 @@ class TestHandleMessage:
             "Д/с",
             force_rename=True,
         )
+
+    async def test_existing_group_topic_refreshes_chat_title_before_rename(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock(return_value=777)
+        sender.topic_store = MagicMock()
+        sender.topic_store.get_topic.return_value = 777
+        sender.topic_store.get_title.return_value = "Старое Д/с"
+
+        client = create_max_client(
+            max_token="tok",
+            max_device_id="dev",
+            sender=sender,
+        )
+        resolver = client.resolver
+        resolver.resolve_chat = AsyncMock(return_value="Новое Д/с")
+        resolver.resolve_user = AsyncMock(return_value="Галина")
+        resolver.chat_types[-100] = "GROUP"
+
+        await client._on_message_cb(
+            MaxMessage(chat_id=-100, sender_id=43, text="Здравствуйте")
+        )
+
+        resolver.resolve_chat.assert_awaited_once_with(-100, refresh=True)
+        sender.ensure_topic.assert_awaited_once_with(
+            -100,
+            "Новое Д/с",
+            force_rename=True,
+        )
