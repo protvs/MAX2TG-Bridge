@@ -1,7 +1,7 @@
 """Tests for app/max_client.py — OpCode enum and _parse_message."""
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from app.max_client import MaxClient, MaxMessage, OpCode
 
@@ -229,6 +229,17 @@ class TestParseMessage:
 # ---------------------------------------------------------------------------
 
 class TestMaxClientInit:
+    def test_favorites_bypass_allow_list(self):
+        client = MaxClient("tok", "dev", chat_ids="-10")
+        assert client._should_dispatch_message(MaxMessage(chat_id=0)) is True
+        assert client._should_dispatch_message(MaxMessage(chat_id=43)) is False
+
+    def test_ignore_list_still_blocks_favorites(self):
+        client = MaxClient(
+            "tok", "dev", ignore_chat_ids="0",
+        )
+        assert client._should_dispatch_message(MaxMessage(chat_id=0)) is False
+
     def test_token_stored(self):
         c = MaxClient(token="my_token", device_id="dev1")
         assert c.token == "my_token"
@@ -389,7 +400,8 @@ class TestMaxClientInit:
         msg = MaxMessage(chat_id=-1, message_id="m1")
 
         assert c._can_start_message(msg, now=100.0) is True
-        c._finish_message(msg, delivered=True)
+        with patch("app.max_client.time.monotonic", return_value=100.0):
+            c._finish_message(msg, delivered=True)
 
         assert c._can_start_message(
             msg,

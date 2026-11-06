@@ -93,16 +93,20 @@ async def main():
     if settings.reply_enabled:
         tg_app = build_tg_app(settings.tg_bot_token, client, settings.tg_chat_id,
                               topic_store, allowed_user_id=settings.tg_allowed_user_id,
-                              proxy_url=settings.tg_proxy)
+                              proxy_url=settings.tg_proxy,
+                              reply_enabled=settings.reply_enabled)
         await tg_app.initialize()
         await tg_app.start()
         await tg_app.updater.start_polling(
             drop_pending_updates=True,
             allowed_updates=Update.ALL_TYPES,
         )
-        log.info("Telegram polling started (reply → Max enabled)")
+        log.info(
+            "Telegram polling started (TG to MAX, including Favorites=%s)",
+            settings.reply_enabled,
+        )
     else:
-        log.info("Reply to Max disabled (REPLY_ENABLED=false)")
+        log.info("Telegram to MAX disabled (REPLY_ENABLED=false)")
 
     health_runner = await start_health_server(client)
 

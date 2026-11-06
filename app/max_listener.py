@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 from html import escape
 
-from app.max_client import MaxClient, MaxMessage
+from app.max_client import FAVORITES_CHAT_ID, MaxClient, MaxMessage
 from app.resolver import ContactResolver
 from app.tg_sender import TelegramSender
 
@@ -380,45 +380,43 @@ def create_max_client(
             )
             return
 
-        existing_thread = sender.topic_store.get_topic(msg.chat_id)
-        raw_chat = await resolver.resolve_chat(
-            msg.chat_id,
-            refresh=existing_thread is not None and not resolver.is_dm(msg.chat_id),
-        )
-        raw_sender = await resolver.resolve_user(msg.sender_id)
-        is_dm = resolver.is_dm(msg.chat_id)
+        if msg.chat_id == FAVORITES_CHAT_ID:
+            thread_id = None
+            header_text = "<b>Избранное MAX</b>"
+        else:
+            existing_thread = sender.topic_store.get_topic(msg.chat_id)
+            raw_chat = await resolver.resolve_chat(
+                msg.chat_id,
+                refresh=existing_thread is not None and not resolver.is_dm(msg.chat_id),
+            )
+            raw_sender = await resolver.resolve_user(msg.sender_id)
+            is_dm = resolver.is_dm(msg.chat_id)
 
-        # One forum topic per Max chat. Prefer a human title:
-        # - DMs → the peer's name
-        # - Groups with a known title → the chat title
-        # - Unknown chats → numeric placeholder, so a later real chat title can
-        #   safely rename the topic.
-        topic_title = _topic_title_for_message(msg, raw_sender, raw_chat, is_dm)
+            # Unknown chats keep a numeric placeholder until metadata is known.
+            topic_title = _topic_title_for_message(msg, raw_sender, raw_chat, is_dm)
 
-        stored_title = sender.topic_store.get_title(msg.chat_id) or ""
-        force_rename = (
-            existing_thread is not None
-            and not is_dm
-            and _is_known_chat_title(msg.chat_id, topic_title)
-            and stored_title != topic_title
-        )
-        thread_id = await sender.ensure_topic(
-            msg.chat_id,
-            topic_title,
-            force_rename=force_rename,
-        )
+            stored_title = sender.topic_store.get_title(msg.chat_id) or ""
+            force_rename = (
+                existing_thread is not None
+                and not is_dm
+                and _is_known_chat_title(msg.chat_id, topic_title)
+                and stored_title != topic_title
+            )
+            thread_id = await sender.ensure_topic(
+                msg.chat_id,
+                topic_title,
+                force_rename=force_rename,
+            )
 
-        # First time we touch this chat → publish a pinned profile card so the
-        # topic starts with context (avatar, name, etc.).
-        if existing_thread is None and thread_id is not None:
-            from app.tg_handler import post_topic_intro
-            asyncio.create_task(post_topic_intro(
-                sender.bot, sender.chat_id, client, msg.chat_id, thread_id,
-            ))
+            if existing_thread is None and thread_id is not None:
+                from app.tg_handler import post_topic_intro
+                asyncio.create_task(post_topic_intro(
+                    sender.bot, sender.chat_id, client, msg.chat_id, thread_id,
+                ))
 
-        sender_label = escape(raw_sender)
-        chat_label = escape(raw_chat)
-        header_text = _header(msg, sender_label, chat_label, is_dm)
+            sender_label = escape(raw_sender)
+            chat_label = escape(raw_chat)
+            header_text = _header(msg, sender_label, chat_label, is_dm)
 
         link = msg.link
         link_type = link.get("type") if isinstance(link, dict) else None

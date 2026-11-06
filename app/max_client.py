@@ -14,6 +14,7 @@ import aiohttp
 log = logging.getLogger(__name__)
 
 DEBUG_DIR = "debug"
+FAVORITES_CHAT_ID = 0
 
 
 def _log_task_exception(task: "asyncio.Task") -> None:
@@ -153,6 +154,8 @@ class MaxClient:
             return False
         if msg.chat_id in self.ignore_chat_ids:
             return False
+        if msg.chat_id == FAVORITES_CHAT_ID:
+            return True
         return not self.chat_ids or msg.chat_id in self.chat_ids
 
     def _message_dedupe_key(self, msg: MaxMessage) -> tuple[Any, str] | None:

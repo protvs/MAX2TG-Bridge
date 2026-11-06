@@ -201,6 +201,79 @@ class TestTopicTitle:
 
 
 class TestHandleMessage:
+    async def test_favorites_text_goes_to_general_without_topic_or_metadata(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock()
+        client = create_max_client("tok", "dev", sender)
+        client.resolver.resolve_chat = AsyncMock()
+        client.resolver.resolve_user = AsyncMock()
+
+        await client._on_message_cb(MaxMessage(
+            chat_id=0, sender_id=1, text="note <saved>", is_self=True,
+        ))
+
+        sender.send.assert_awaited_once_with(
+            "<b>Избранное MAX</b>\nnote &lt;saved&gt;", message_thread_id=None,
+        )
+        sender.ensure_topic.assert_not_awaited()
+        client.resolver.resolve_chat.assert_not_awaited()
+        client.resolver.resolve_user.assert_not_awaited()
+
+    async def test_favorites_photo_goes_to_general(self):
+        sender = MagicMock()
+        sender.send_photo = AsyncMock()
+        sender.ensure_topic = AsyncMock()
+        client = create_max_client("tok", "dev", sender)
+        client.download_file = AsyncMock(return_value=b"image")
+
+        await client._on_message_cb(MaxMessage(
+            chat_id=0, sender_id=1, is_self=True,
+            attaches=[{"_type": "PHOTO", "url": "https://example.com/photo"}],
+        ))
+
+        sender.send_photo.assert_awaited_once_with(
+            b"image", caption="<b>Избранное MAX</b>", message_thread_id=None,
+        )
+        sender.ensure_topic.assert_not_awaited()
+
+    async def test_favorites_forwarded_text_goes_to_general(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock()
+        client = create_max_client("tok", "dev", sender)
+
+        await client._on_message_cb(MaxMessage(
+            chat_id=0, sender_id=1, is_self=True,
+            link={"type": "FORWARD", "message": {"text": "original"}},
+        ))
+
+        sender.send.assert_awaited_once()
+        assert "original" in sender.send.call_args.args[0]
+        assert sender.send.call_args.kwargs["message_thread_id"] is None
+        sender.ensure_topic.assert_not_awaited()
+
+    async def test_favorites_bridge_echo_does_not_return_to_general(self):
+        sender = MagicMock()
+        sender.send = AsyncMock()
+        sender.ensure_topic = AsyncMock()
+        client = create_max_client("tok", "dev", sender)
+        client._my_id = 1
+
+        async def max_send(opcode, payload):
+            echo = client._parse_message({
+                "chatId": payload["chatId"],
+                "message": {**payload["message"], "sender": 1, "id": "echo"},
+            })
+            await client._on_message_cb(echo)
+            return {"ok": True}
+
+        client.cmd = max_send
+        await client.send_message(0, "from Telegram")
+
+        sender.send.assert_not_awaited()
+        sender.ensure_topic.assert_not_awaited()
+
     async def test_empty_system_event_does_not_create_topic_or_send(self):
         sender = MagicMock()
         sender.send = AsyncMock()
@@ -259,7 +332,7 @@ class TestHandleMessage:
             max_device_id="dev",
             sender=sender,
         )
-        client._mark_outbound_cid(chat_id=42, cid=123, now=100.0)
+        client._mark_outbound_cid(chat_id=42, cid=123)
 
         await client._on_message_cb(
             MaxMessage(chat_id=42, sender_id=1, text="эхо", cid=123, is_self=True)

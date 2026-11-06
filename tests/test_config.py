@@ -59,6 +59,10 @@ class TestSettingsDataclass:
 # ---------------------------------------------------------------------------
 
 class TestLoadSettingsValid:
+    def test_obsolete_favorites_id_does_not_affect_startup(self):
+        s = _load_settings_with_env(_env(MAX_FAVORITES_CHAT_ID="0"))
+        assert s.tg_chat_id == "-100123456"
+
     def test_required_fields_populated(self):
         s = _load_settings_with_env(_env())
         assert s.max_token == "token123"
