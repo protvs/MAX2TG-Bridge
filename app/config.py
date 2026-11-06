@@ -17,6 +17,7 @@ class Settings:
     reply_enabled: bool = False
     state_dir: str = "state"
     tg_allowed_user_id: int | None = None
+    max_favorites_chat_id: int | None = None
 
 
 def load_settings() -> Settings:
@@ -48,6 +49,18 @@ def load_settings() -> Settings:
                 f"TG_ALLOWED_USER_ID must be a valid integer, got: {allowed_raw!r}"
             )
 
+    favorites_raw = os.environ.get("MAX_FAVORITES_CHAT_ID", "").strip()
+    favorites_chat_id = None
+    if favorites_raw:
+        try:
+            favorites_chat_id = int(favorites_raw)
+            if favorites_chat_id == 0:
+                raise ValueError("zero chat ID")
+        except ValueError as exc:
+            raise SystemExit(
+                "MAX_FAVORITES_CHAT_ID must be a non-zero integer chat ID"
+            ) from exc
+
     return Settings(
         max_token=os.environ["MAX_TOKEN"],
         max_device_id=os.environ["MAX_DEVICE_ID"],
@@ -60,4 +73,5 @@ def load_settings() -> Settings:
         reply_enabled=os.environ.get("REPLY_ENABLED", "").lower() in ("1", "true", "yes"),
         state_dir=os.environ.get("STATE_DIR") or "state",
         tg_allowed_user_id=allowed_user_id,
+        max_favorites_chat_id=favorites_chat_id,
     )

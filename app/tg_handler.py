@@ -24,6 +24,8 @@ MAX_CLIENT_KEY = "max_client"
 TOPIC_STORE_KEY = "topic_store"
 ALLOWED_USER_KEY = "allowed_user_id"
 SUPERGROUP_KEY = "supergroup_id"
+FAVORITES_CHAT_KEY = "favorites_chat_id"
+REPLY_ENABLED_KEY = "reply_enabled"
 
 _MAX_URL_RE = re.compile(r"https?://(?:web\.)?max\.ru/(-?\d+)")
 
@@ -118,15 +120,25 @@ def _resolve_topic_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if message is None:
         return None
-    thread_id = message.message_thread_id
-    if thread_id is None or not message.is_topic_message:
+    if not context.bot_data.get(REPLY_ENABLED_KEY, True):
         return None
-    topic_store: TopicStore | None = context.bot_data.get(TOPIC_STORE_KEY)
-    max_chat_id = topic_store.chat_for_topic(thread_id) if topic_store else None
-    if max_chat_id is None:
+    if message.from_user and message.from_user.is_bot is True:
         return None
     allowed_user_id = context.bot_data.get(ALLOWED_USER_KEY)
-    if allowed_user_id and update.effective_user and update.effective_user.id != allowed_user_id:
+    if allowed_user_id and (
+        not update.effective_user or update.effective_user.id != allowed_user_id
+    ):
+        return None
+
+    thread_id = message.message_thread_id
+    if thread_id in (None, 1):
+        max_chat_id = context.bot_data.get(FAVORITES_CHAT_KEY)
+    elif message.is_topic_message:
+        topic_store: TopicStore | None = context.bot_data.get(TOPIC_STORE_KEY)
+        max_chat_id = topic_store.chat_for_topic(thread_id) if topic_store else None
+    else:
+        return None
+    if max_chat_id is None:
         return None
     max_client: MaxClient | None = context.bot_data.get(MAX_CLIENT_KEY)
     return message, max_chat_id, max_client
@@ -901,7 +913,9 @@ async def _cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def build_tg_app(token: str, max_client: MaxClient, supergroup_id: str,
                  topic_store: TopicStore, allowed_user_id: int | None = None,
-                 proxy_url: str | None = None) -> Application:
+                 proxy_url: str | None = None,
+                 favorites_chat_id: int | None = None,
+                 reply_enabled: bool = True) -> Application:
     """Build the Telegram Application that routes topic replies back to Max."""
     builder = Application.builder().token(token)
     if proxy_url:
@@ -911,15 +925,18 @@ def build_tg_app(token: str, max_client: MaxClient, supergroup_id: str,
     app.bot_data[TOPIC_STORE_KEY] = topic_store
     app.bot_data[ALLOWED_USER_KEY] = int(allowed_user_id) if allowed_user_id else None
     app.bot_data[SUPERGROUP_KEY] = int(supergroup_id)
+    app.bot_data[FAVORITES_CHAT_KEY] = favorites_chat_id
+    app.bot_data[REPLY_ENABLED_KEY] = reply_enabled
 
     chat_filter = filters.Chat(chat_id=int(supergroup_id))
-    app.add_handler(CommandHandler("bind", _cmd_bind, filters=chat_filter))
-    app.add_handler(CommandHandler("add", _cmd_add, filters=chat_filter))
-    app.add_handler(CommandHandler("profile", _cmd_profile, filters=chat_filter))
-    app.add_handler(CommandHandler("intro", _cmd_intro, filters=chat_filter))
-    app.add_handler(CommandHandler("del", _cmd_del, filters=chat_filter))
-    app.add_handler(CommandHandler("help", _cmd_help, filters=chat_filter))
-    app.add_handler(CallbackQueryHandler(_on_del_callback, pattern=r"^del:"))
+    if reply_enabled:
+        app.add_handler(CommandHandler("bind", _cmd_bind, filters=chat_filter))
+        app.add_handler(CommandHandler("add", _cmd_add, filters=chat_filter))
+        app.add_handler(CommandHandler("profile", _cmd_profile, filters=chat_filter))
+        app.add_handler(CommandHandler("intro", _cmd_intro, filters=chat_filter))
+        app.add_handler(CommandHandler("del", _cmd_del, filters=chat_filter))
+        app.add_handler(CommandHandler("help", _cmd_help, filters=chat_filter))
+        app.add_handler(CallbackQueryHandler(_on_del_callback, pattern=r"^del:"))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND & chat_filter, _on_topic_message)
     )

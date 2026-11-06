@@ -109,10 +109,12 @@ class MaxClient:
         chat_ids: str | None = None,
         ignore_chat_ids: str | None = None,
         debug: bool = False,
+        favorites_chat_id: int | None = None,
     ):
         self.token = token
         self.device_id = device_id
         self.debug = debug
+        self.favorites_chat_id = favorites_chat_id
         self.chat_ids = self._parse_chat_ids(chat_ids, "MAX_CHAT_IDS")
         self.ignore_chat_ids = self._parse_chat_ids(
             ignore_chat_ids, "MAX_IGNORE_CHAT_IDS"
@@ -153,6 +155,8 @@ class MaxClient:
             return False
         if msg.chat_id in self.ignore_chat_ids:
             return False
+        if self.favorites_chat_id is not None and msg.chat_id == self.favorites_chat_id:
+            return True
         return not self.chat_ids or msg.chat_id in self.chat_ids
 
     def _message_dedupe_key(self, msg: MaxMessage) -> tuple[Any, str] | None:

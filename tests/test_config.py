@@ -52,6 +52,7 @@ class TestSettingsDataclass:
         assert s.reply_enabled is False
         assert s.max_chat_ids is None
         assert s.max_ignore_chat_ids is None
+        assert s.max_favorites_chat_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +60,20 @@ class TestSettingsDataclass:
 # ---------------------------------------------------------------------------
 
 class TestLoadSettingsValid:
+    def test_favorites_chat_id(self):
+        s = _load_settings_with_env(_env(MAX_FAVORITES_CHAT_ID=" 12345 "))
+        assert s.max_favorites_chat_id == 12345
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_favorites_disabled_when_empty(self, value):
+        s = _load_settings_with_env(_env(MAX_FAVORITES_CHAT_ID=value))
+        assert s.max_favorites_chat_id is None
+
+    @pytest.mark.parametrize("value", ["abc", "0", "1,2"])
+    def test_invalid_favorites_chat_id(self, value):
+        with pytest.raises(SystemExit, match="MAX_FAVORITES_CHAT_ID"):
+            _load_settings_with_env(_env(MAX_FAVORITES_CHAT_ID=value))
+
     def test_required_fields_populated(self):
         s = _load_settings_with_env(_env())
         assert s.max_token == "token123"

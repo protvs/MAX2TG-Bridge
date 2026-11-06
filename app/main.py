@@ -86,6 +86,7 @@ async def main():
         settings.max_chat_ids,
         settings.max_ignore_chat_ids,
         debug=settings.debug,
+        max_favorites_chat_id=settings.max_favorites_chat_id,
     )
 
     tg_app = None
@@ -93,16 +94,22 @@ async def main():
     if settings.reply_enabled:
         tg_app = build_tg_app(settings.tg_bot_token, client, settings.tg_chat_id,
                               topic_store, allowed_user_id=settings.tg_allowed_user_id,
-                              proxy_url=settings.tg_proxy)
+                              proxy_url=settings.tg_proxy,
+                              favorites_chat_id=settings.max_favorites_chat_id,
+                              reply_enabled=settings.reply_enabled)
         await tg_app.initialize()
         await tg_app.start()
         await tg_app.updater.start_polling(
             drop_pending_updates=True,
             allowed_updates=Update.ALL_TYPES,
         )
-        log.info("Telegram polling started (reply → Max enabled)")
+        log.info(
+            "Telegram polling started (topic replies=%s, General to Favorites=%s)",
+            settings.reply_enabled,
+            settings.max_favorites_chat_id is not None,
+        )
     else:
-        log.info("Reply to Max disabled (REPLY_ENABLED=false)")
+        log.info("Telegram to MAX disabled (REPLY_ENABLED=false)")
 
     health_runner = await start_health_server(client)
 

@@ -1,12 +1,16 @@
 """Tests for app/tg_handler.py — topic-based reply routing."""
 
 from unittest.mock import AsyncMock, MagicMock
+import pytest
 
 from app.tg_handler import (
     ALLOWED_USER_KEY,
+    FAVORITES_CHAT_KEY,
+    REPLY_ENABLED_KEY,
     MAX_CLIENT_KEY,
     TOPIC_STORE_KEY,
     _on_topic_message,
+    _on_topic_media,
     _peer_id_in_dm,
     build_tg_app,
 )
@@ -73,6 +77,93 @@ class TestPeerIdInDm:
 # ---------------------------------------------------------------------------
 
 class TestOnTopicMessage:
+    @pytest.mark.parametrize("thread_id", [None, 1])
+    @pytest.mark.parametrize("reply_enabled", [False, True])
+    async def test_general_routes_to_favorites_obeys_reply_flag(self, thread_id, reply_enabled):
+        client = MagicMock()
+        client.send_message = AsyncMock(return_value={"ok": True})
+        ctx = _make_context(max_client=client, topic_store=_make_topic_store())
+        ctx.bot_data[FAVORITES_CHAT_KEY] = 54321
+        ctx.bot_data[REPLY_ENABLED_KEY] = reply_enabled
+        update = _make_update("Saved text", thread_id=thread_id, is_topic_message=False)
+
+        await _on_topic_message(update, ctx)
+
+        if reply_enabled:
+            client.send_message.assert_awaited_once_with(54321, "Saved text", elements=[])
+        else:
+            client.send_message.assert_not_awaited()
+
+    @pytest.mark.parametrize("bot_author, user_id", [(True, 100), (False, 999)])
+    async def test_general_rejects_bot_or_unauthorized_user(self, bot_author, user_id):
+        client = MagicMock()
+        client.send_message = AsyncMock()
+        ctx = _make_context(max_client=client, allowed_user_id=100)
+        ctx.bot_data[FAVORITES_CHAT_KEY] = 54321
+        update = _make_update(thread_id=None, is_topic_message=False, user_id=user_id)
+        update.message.from_user.is_bot = bot_author
+
+        await _on_topic_message(update, ctx)
+
+        client.send_message.assert_not_awaited()
+
+    async def test_other_topics_keep_their_destination_with_favorites_enabled(self):
+        client = MagicMock()
+        client.send_message = AsyncMock(return_value={"ok": True})
+        ctx = _make_context(max_client=client, topic_store=_make_topic_store({10: 42}))
+        ctx.bot_data[FAVORITES_CHAT_KEY] = 54321
+
+        await _on_topic_message(_make_update(), ctx)
+
+        client.send_message.assert_awaited_once_with(42, "Hello", elements=[])
+
+    async def test_regular_topic_is_blocked_when_replies_disabled(self):
+        client = MagicMock()
+        client.send_message = AsyncMock()
+        ctx = _make_context(max_client=client, topic_store=_make_topic_store({10: 42}))
+        ctx.bot_data[FAVORITES_CHAT_KEY] = 54321
+        ctx.bot_data[REPLY_ENABLED_KEY] = False
+
+        await _on_topic_message(_make_update(), ctx)
+
+        client.send_message.assert_not_awaited()
+
+    @pytest.mark.parametrize("kind", ["photo", "document"])
+    @pytest.mark.parametrize("reply_enabled", [False, True])
+    async def test_general_media_routes_to_favorites_obeys_reply_flag(self, kind, reply_enabled):
+        client = MagicMock()
+        client.send_message = AsyncMock(return_value={"ok": True})
+        attach = {"_type": "PHOTO" if kind == "photo" else "FILE", "fileId": 123}
+        client.upload_photo = AsyncMock(return_value=attach)
+        client.upload_file = AsyncMock(return_value=attach)
+        ctx = _make_context(max_client=client)
+        ctx.bot_data[FAVORITES_CHAT_KEY] = 54321
+        ctx.bot_data[REPLY_ENABLED_KEY] = reply_enabled
+        update = _make_update(thread_id=None, is_topic_message=False)
+        message = update.message
+        message.caption = "caption"
+        message.caption_entities = []
+        for field in ("photo", "voice", "audio", "document", "video"):
+            setattr(message, field, None)
+        media = MagicMock()
+        media.file_name = "note.pdf"
+        media.mime_type = "application/pdf"
+        media.get_file = AsyncMock()
+        media.get_file.return_value.download_as_bytearray = AsyncMock(return_value=b"data")
+        setattr(message, kind, [media] if kind == "photo" else media)
+
+        await _on_topic_media(update, ctx)
+
+        if reply_enabled:
+            client.send_message.assert_awaited_once_with(
+                54321, text="caption", elements=[], attaches=[attach],
+            )
+        else:
+            client.send_message.assert_not_awaited()
+            client.upload_photo.assert_not_awaited()
+            client.upload_file.assert_not_awaited()
+            media.get_file.assert_not_awaited()
+
     async def test_routes_topic_text_to_max(self):
         max_client = MagicMock()
         max_client.send_message = AsyncMock(return_value={"ok": True})
@@ -191,6 +282,22 @@ class TestOnTopicMessage:
 # ---------------------------------------------------------------------------
 
 class TestBuildTgApp:
+    def test_disabled_replies_flag_is_preserved_with_favorites(self):
+        app = build_tg_app(
+            "123456:AAABBBCCC", MagicMock(), "-100123456",
+            _make_topic_store(), favorites_chat_id=54321, reply_enabled=False,
+        )
+        assert app.bot_data[FAVORITES_CHAT_KEY] == 54321
+        assert app.bot_data[REPLY_ENABLED_KEY] is False
+        assert len(app.handlers[0]) == 2
+
+    def test_favorites_configured_in_bot_data(self):
+        app = build_tg_app(
+            "123456:AAABBBCCC", MagicMock(), "-100123456",
+            _make_topic_store(), favorites_chat_id=54321,
+        )
+        assert app.bot_data[FAVORITES_CHAT_KEY] == 54321
+
     def test_wires_bot_data(self):
         max_client = MagicMock()
         topic_store = _make_topic_store()
