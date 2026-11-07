@@ -1,6 +1,8 @@
 # Deployment to VPS
 
-Run **Actions -> Deploy to VPS -> Run workflow -> main**.
+Deployment runs automatically on every push to `main`, including changes to
+application code and the workflow itself. To run it manually, select
+**Actions -> Deploy to VPS -> Run workflow -> main**.
 Everything is in `.github/workflows/deploy.yml`: build the image, transfer it
 over SSH, load it on the VPS, write `.env`, and restart the service using the
 existing `docker-compose.yml`. No registry or separate deployment scripts.

@@ -1,6 +1,8 @@
 name: Deploy to VPS
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -51,10 +53,7 @@ jobs:
           for key in MAX_TOKEN MAX_DEVICE_ID MAX_IGNORE_CHAT_IDS TG_BOT_TOKEN TG_CHAT_ID DEBUG REPLY_ENABLED; do
             value=${!key}
             [[ $value != *$'\n'* && $value != *$'\r'* ]] || exit 1
-            value=${value//\\/\\\\}
-            value=${value//\"/\\\"}
-            value=${value//\$/\$\$}
-            printf '%s="%s"\n' "$key" "$value"
+            printf '%s=%s\n' "$key" "$value"
           done > "$RUNNER_TEMP/runtime.env"
 
       - name: Upload and deploy
