@@ -496,9 +496,12 @@ class MaxClient:
             attaches = []
         cid = int(time.time() * 1000) * 1000 + random.randint(0, 999)
         self._mark_outbound_cid(chat_id, cid)
-        message = {"text": text, "cid": cid, "elements": elements}
-        if attaches:
-            message["attaches"] = attaches
+        message = {
+            "text": text,
+            "cid": cid,
+            "elements": elements,
+            "attaches": attaches,
+        }
         resp = await self.cmd(
             OpCode.SEND_MESSAGE,
             {

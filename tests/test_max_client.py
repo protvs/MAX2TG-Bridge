@@ -107,6 +107,32 @@ def _make_client() -> MaxClient:
     return MaxClient(token="tok", device_id="dev")
 
 
+class TestSendMessage:
+    @pytest.mark.parametrize("chat_id", [0, 42])
+    @pytest.mark.parametrize("attaches", [None, [], [{"_type": "PHOTO", "photoToken": "test"}]])
+    async def test_send_always_includes_attaches(self, chat_id, attaches):
+        client = _make_client()
+        response = {"chatId": chat_id, "message": {"id": "sent"}}
+        client.cmd = AsyncMock(return_value=response)
+
+        result = await client.send_message(chat_id, "Saved text", attaches=attaches)
+
+        client.cmd.assert_awaited_once()
+        opcode, payload = client.cmd.await_args.args
+        assert opcode == OpCode.SEND_MESSAGE
+        assert payload == {
+            "chatId": chat_id,
+            "message": {
+                "text": "Saved text",
+                "cid": payload["message"]["cid"],
+                "elements": [],
+                "attaches": attaches if attaches is not None else [],
+            },
+            "notify": True,
+        }
+        assert result is response
+
+
 class TestParseMessage:
     """Tests for _parse_message — the only complex pure-ish method."""
 
