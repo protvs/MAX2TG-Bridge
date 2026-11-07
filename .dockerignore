@@ -16,5 +16,6 @@ debug/
 logs/
 state/
 tests/
+.github/
 app/debug
 app/logs

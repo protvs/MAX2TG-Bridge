@@ -1,0 +1,111 @@
+name: Deploy to VPS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE_TAG: max2tg-bridge:latest
+      DOCKER_PLATFORM: ${{ vars.DOCKER_PLATFORM || 'linux/amd64' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and save image
+        run: |
+          set -euo pipefail
+          docker buildx build --platform "$DOCKER_PLATFORM" --load --tag "$IMAGE_TAG" .
+          docker image save "$IMAGE_TAG" | gzip > "$RUNNER_TEMP/image.tar.gz"
+
+      - name: Write .env
+        env:
+          MAX_TOKEN: ${{ secrets.MAX_TOKEN }}
+          MAX_DEVICE_ID: ${{ vars.MAX_DEVICE_ID }}
+          MAX_IGNORE_CHAT_IDS: ${{ vars.MAX_IGNORE_CHAT_IDS }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ vars.TG_CHAT_ID }}
+          DEBUG: ${{ vars.DEBUG || 'false' }}
+          REPLY_ENABLED: ${{ vars.REPLY_ENABLED || 'true' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          : "${MAX_TOKEN:?MAX_TOKEN is required}"
+          : "${MAX_DEVICE_ID:?MAX_DEVICE_ID is required}"
+          : "${TG_BOT_TOKEN:?TG_BOT_TOKEN is required}"
+          : "${TG_CHAT_ID:?TG_CHAT_ID is required}"
+          for key in MAX_TOKEN MAX_DEVICE_ID MAX_IGNORE_CHAT_IDS TG_BOT_TOKEN TG_CHAT_ID DEBUG REPLY_ENABLED; do
+            value=${!key}
+            [[ $value != *$'\n'* && $value != *$'\r'* ]] || exit 1
+            value=${value//\\/\\\\}
+            value=${value//\"/\\\"}
+            value=${value//\$/\$\$}
+            printf '%s="%s"\n' "$key" "$value"
+          done > "$RUNNER_TEMP/runtime.env"
+
+      - name: Upload and deploy
+        env:
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_PROJECT: ${{ vars.DEPLOY_PROJECT }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ $VPS_HOST =~ ^[A-Za-z0-9:.%-]+$ ]]
+          [[ $VPS_USER =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ $VPS_PORT =~ ^[0-9]+$ ]]
+          [[ $DEPLOY_PATH =~ ^/[A-Za-z0-9_./-]+$ ]]
+          [[ $DEPLOY_PROJECT =~ ^[a-z0-9][a-z0-9_-]*$ ]]
+          test -n "$VPS_SSH_KEY"
+          test -n "$VPS_KNOWN_HOSTS"
+          mkdir -m 700 "$RUNNER_TEMP/deploy-ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/deploy-ssh/key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/deploy-ssh/known_hosts"
+          cat > "$RUNNER_TEMP/deploy-ssh/config" <<EOF
+          Host deploy-vps
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $VPS_PORT
+            IdentityFile $RUNNER_TEMP/deploy-ssh/key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile $RUNNER_TEMP/deploy-ssh/known_hosts
+          EOF
+          ssh_config="$RUNNER_TEMP/deploy-ssh/config"
+          ssh -F "$ssh_config" deploy-vps "umask 077; mkdir -p '$DEPLOY_PATH/.deploy'"
+          scp -F "$ssh_config" "$RUNNER_TEMP/image.tar.gz" "$RUNNER_TEMP/runtime.env" \
+            docker-compose.yml "deploy-vps:$DEPLOY_PATH/.deploy/"
+          ssh -F "$ssh_config" deploy-vps "bash -s -- '$DEPLOY_PATH' '$DEPLOY_PROJECT'" <<'REMOTE'
+          set -euo pipefail
+          cd "$1"
+          docker image load --input .deploy/image.tar.gz
+          chmod 600 .deploy/runtime.env
+          mv .deploy/runtime.env .env
+          mv .deploy/docker-compose.yml docker-compose.yml
+          docker compose -p "$2" config --quiet
+          docker compose -p "$2" up -d --no-build --pull never --wait --wait-timeout 180 max2tg
+          rm -f .deploy/image.tar.gz
+          REMOTE
+
+      - name: Remove temporary credentials
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/runtime.env" "$RUNNER_TEMP/deploy-ssh"
