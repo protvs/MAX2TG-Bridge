@@ -97,12 +97,35 @@ jobs:
           ssh -F "$ssh_config" deploy-vps "bash -s -- '$DEPLOY_PATH' '$DEPLOY_PROJECT'" <<'REMOTE'
           set -euo pipefail
           cd "$1"
+          if docker compose version >/dev/null 2>&1; then
+            compose=(docker compose)
+          elif docker-compose version >/dev/null 2>&1; then
+            compose=(docker-compose)
+          else
+            echo 'Docker Compose is not installed on the VPS' >&2
+            exit 1
+          fi
+          up_args=(up -d --no-build --force-recreate)
+          if "${compose[@]}" up --help | grep -q -- '--pull'; then
+            up_args+=(--pull never)
+          fi
           docker image load --input .deploy/image.tar.gz
           chmod 600 .deploy/runtime.env
           mv .deploy/runtime.env .env
           mv .deploy/docker-compose.yml docker-compose.yml
-          docker compose -p "$2" config --quiet
-          docker compose -p "$2" up -d --no-build --pull never --wait --wait-timeout 180 max2tg
+          "${compose[@]}" -p "$2" config --quiet
+          "${compose[@]}" -p "$2" "${up_args[@]}" max2tg
+          container_id=$("${compose[@]}" -p "$2" ps -q max2tg)
+          test -n "$container_id"
+          for attempt in {1..36}; do
+            health=$(docker inspect --format '{{.State.Health.Status}}' "$container_id")
+            [[ $health == healthy ]] && break
+            sleep 5
+          done
+          if [[ $health != healthy ]]; then
+            echo "Container did not become healthy within 180 seconds (status: $health)" >&2
+            exit 1
+          fi
           rm -f .deploy/image.tar.gz
           REMOTE
 
