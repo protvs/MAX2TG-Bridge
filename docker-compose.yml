@@ -1,3 +1,5 @@
+version: '2.4'
+
 services:
   max2tg:
     image: max2tg-bridge:latest
