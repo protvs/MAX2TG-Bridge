@@ -1,7 +1,10 @@
 """Tests for app/max_client.py — OpCode enum and _parse_message."""
 
+import asyncio
+import json
+
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.max_client import MaxClient, MaxMessage, OpCode
 
@@ -131,6 +134,35 @@ class TestSendMessage:
             "notify": True,
         }
         assert result is response
+
+
+class TestHandshake:
+    async def test_run_sends_app_version_inside_user_agent(self):
+        client = _make_client()
+        ws = MagicMock()
+        ws.closed = False
+        ws.send_str = AsyncMock()
+        ws.__aiter__.return_value = []
+        connection = MagicMock()
+        connection.__aenter__.return_value = ws
+        session = MagicMock()
+        session.ws_connect.return_value = connection
+        session_context = MagicMock()
+        session_context.__aenter__.return_value = session
+
+        with (
+            patch("app.max_client.aiohttp.ClientSession", return_value=session_context),
+            patch("app.max_client.asyncio.sleep", side_effect=asyncio.CancelledError),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await client.run()
+
+        packet = json.loads(ws.send_str.await_args_list[0].args[0])
+        assert packet["opcode"] == OpCode.HANDSHAKE
+        assert packet["payload"]["deviceId"] == "dev"
+        assert packet["payload"]["userAgent"]["appVersion"] == "26.10.7"
+        assert "appVersion" not in packet["payload"]
+        await asyncio.gather(client._heartbeat_task, return_exceptions=True)
 
 
 class TestParseMessage:

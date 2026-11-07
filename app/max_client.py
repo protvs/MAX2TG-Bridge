@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 DEBUG_DIR = "debug"
 FAVORITES_CHAT_ID = 0
+_APP_VERSION = "26.10.7"
 
 
 def _log_task_exception(task: "asyncio.Task") -> None:
@@ -322,7 +323,7 @@ class MaxClient:
                         self._seq = 0
                         self._pending.clear()
 
-                        log.info("Connected. Sending handshake...")
+                        log.info("Connected. Sending handshake (appVersion=%s)...", _APP_VERSION)
                         await self._send(
                             OpCode.HANDSHAKE,
                             {
@@ -330,8 +331,8 @@ class MaxClient:
                                 "userAgent": {
                                     "deviceType": "WEB",
                                     "deviceName": "Chrome 131.0.0.0",
+                                    "appVersion": _APP_VERSION,
                                 },
-                                "appVersion": "26.2.2",
                             },
                         )
 
